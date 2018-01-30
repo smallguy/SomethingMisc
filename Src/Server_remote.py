@@ -2,10 +2,11 @@ import socket
 import selectors
 import errno
 import re
+import time
 
 def accept(sock, mask):
     conn, addr = sock.accept()  # Should be ready
-    print('accepted', conn, 'from', addr)
+    print('accept', conn, 'from', addr,time.localtime( time.time()))
     sel.register(conn, selectors.EVENT_READ, firstread)
     conn.setblocking(False)
 
@@ -22,11 +23,20 @@ def firstread(sock, mask):
                 datas += data
         except socket.error as msg:
             if msg.errno == errno.WSAEWOULDBLOCK:
-                print(datas)
-                host = ('127.0.0.1', 1560)
+                print('firstread:',datas,time.localtime( time.time()))
+                host = ('183.3.226.47', 80)
                 gethostfromdata(datas,host)
-                datalist[sock] = datas
                 connecttonextpoint(sock, host)
+                method = getmethodfromdata(datas)
+                if(method[0] == b"CONNECT"):
+                    datalist[sockmap[sock]] = method[2] + b' 200 Connection Established'
+                    sel.unregister(sock)
+                    sel.register(sock, selectors.EVENT_WRITE, writer)
+                else:
+                    datalist[sock] = datas
+                    sel.unregister(sockmap[sock])
+                    sel.register(sockmap[sock], selectors.EVENT_WRITE, writer)
+
                 break
             else:
                 sel.unregister(sock)
@@ -42,15 +52,21 @@ def gethostfromdata(datas,host):
     else:
         host = (socket.gethostbyname(strHost[0:index]),int(strHost[index+1:]))
     print(repr(host))
+def getmethodfromdata(datas):
+    index = datas.find(b'\r')
+    strFirstLine = datas[0:index]
+    method = strFirstLine.split(b' ')
+    print("getmethodfromdata",method,datas,time.localtime( time.time()))
+    return method
 
 def connecttonextpoint(sock,host):
     sk = socket.socket()
     sk.connect(host)
-    print('connect from',sk)
+    print('connect next',sk,time.localtime( time.time()))
     sk.setblocking(False)
     sockmap[sock] = sk
     sockmap[sk] = sock
-    sel.register(sk, selectors.EVENT_WRITE, writer)
+    sel.register(sk, selectors.EVENT_READ, read)
 
 
 def read(sock, mask):
@@ -70,7 +86,7 @@ def read(sock, mask):
                 datas += data
         except socket.error as msg:
             if msg.errno == errno.WSAEWOULDBLOCK:
-                print ('read:',datas)
+                print ('read:',datas,time.localtime( time.time()))
                 datalist[sock] = datas
                 sel.unregister(sockmap[sock])
                 sel.register(sockmap[sock],selectors.EVENT_WRITE, writer)
@@ -88,12 +104,12 @@ def writer(sock, mask):
    sendLen = 0
    while True:
        try:
-            sendLen += sock.send(datalist[sockmap[sock]][sendLen:])
-            if sendLen == len(datalist[sockmap[sock]]):
-                sel.unregister(sock)
-                sel.register(sock, selectors.EVENT_READ, read)
-                datalist.pop(sockmap[sock])
-                break
+           sock.sendall(str(datalist[sockmap[sock]]).encode())
+           print('writer:', str(datalist[sockmap[sock]]),time.localtime( time.time()))
+           sel.unregister(sock)
+           sel.register(sock, selectors.EVENT_READ, read)
+           datalist.pop(sockmap[sock])
+           break
        except socket.error as msg:
            sel.unregister(sockmap[sock])
            sel.unregister(sock)
@@ -112,9 +128,9 @@ sel.register(sk, selectors.EVENT_READ, accept)
 datalist = {} #store msg
 sockmap = {} # store connection map
 #加一个是否处理加密问题的set
-print("start")
+print("start",time.localtime( time.time()))
 while True:
-    print("listening")
+    print("listening",time.localtime( time.time()))
     events = sel.select()
     for key, mask in events:
         callback = key.data
