@@ -19,6 +19,25 @@ def firstread(sock, mask):
                 sel.unregister(sock)
                 sock.close()
                 break
+            elif not data and datas:
+                try:
+                     print('firstread:',datas,time.localtime( time.time()))
+                     host = gethostfromdata(datas)
+                     connecttonextpoint(sock, host)
+                     method = getmethodfromdata(datas)
+                     if(method[0] == b"CONNECT"):
+                         datalist[sockmap[sock]] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
+                         sel.unregister(sock)
+                         sel.register(sock, selectors.EVENT_WRITE, writer)
+                     else:
+                         adjustdata = adjustRequestHeader(datas)
+                         datalist[sock] = adjustdata
+                         sel.unregister(sockmap[sock])
+                         sel.register(sockmap[sock], selectors.EVENT_WRITE, writer)
+                except:
+                         sel.unregister(sock)
+                         sock.close()
+                break
             else:
                 datas += data
         except socket.error as msg:
@@ -58,7 +77,7 @@ def adjustRequestHeader(datas):
         indexHost = indexHost + len(strHost)
     strUrl = strUrl[indexHost:]
     method[1] = strUrl.encode()
-    data = bytes(method[0]).decode() + " " + bytes(method[1]).decode() + " " + bytes(method[2]).decode() + '\r\n' + bytes(datas[index+2:-1]).decode()
+    data = bytes(method[0]).decode() + " " + bytes(method[1]).decode() + " " + bytes(method[2]).decode() + '\r\n' + bytes(datas[index+2:]).decode()
     indexConn = data.find("Proxy-Connection")
     data = data[0:indexConn] + data[indexConn+6:]
     print("adjustRequestHeader",data)
@@ -104,6 +123,12 @@ def read(sock, mask):
                 sel.unregister(sock)
                 sockmap.pop(sock)
                 sock.close()
+                break
+            elif not data and datas:
+                print('read:', datas, time.localtime(time.time()))
+                datalist[sock] = datas
+                sel.unregister(sockmap[sock])
+                sel.register(sockmap[sock], selectors.EVENT_WRITE, writer)
                 break
             else:
                 datas += data
