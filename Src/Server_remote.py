@@ -23,27 +23,47 @@ def firstread(sock, mask):
                 datas += data
         except socket.error as msg:
             if msg.errno == errno.WSAEWOULDBLOCK:
-                print('firstread:',datas,time.localtime( time.time()))
-                host = ('183.3.226.47', 80)
-                gethostfromdata(datas,host)
-                connecttonextpoint(sock, host)
-                method = getmethodfromdata(datas)
-                if(method[0] == b"CONNECT"):
-                    datalist[sockmap[sock]] = method[2] + b' 200 Connection Established'
-                    sel.unregister(sock)
-                    sel.register(sock, selectors.EVENT_WRITE, writer)
-                else:
-                    datalist[sock] = datas
-                    sel.unregister(sockmap[sock])
-                    sel.register(sockmap[sock], selectors.EVENT_WRITE, writer)
-
+                try:
+                     print('firstread:',datas,time.localtime( time.time()))
+                     host = gethostfromdata(datas)
+                     connecttonextpoint(sock, host)
+                     method = getmethodfromdata(datas)
+                     if(method[0] == b"CONNECT"):
+                         datalist[sockmap[sock]] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
+                         sel.unregister(sock)
+                         sel.register(sock, selectors.EVENT_WRITE, writer)
+                     else:
+                         adjustdata = adjustRequestHeader(datas)
+                         datalist[sock] = adjustdata
+                         sel.unregister(sockmap[sock])
+                         sel.register(sockmap[sock], selectors.EVENT_WRITE, writer)
+                except:
+                         sel.unregister(sock)
+                         sock.close()
                 break
             else:
                 sel.unregister(sock)
                 sock.close()
                 break
+def adjustRequestHeader(datas):
+    regex_start_m = re.compile("Host:.+", re.M)
+    strHost = regex_start_m.findall(datas.decode())[0][6:-1]
+    index = datas.find(b'\r')
+    strFirstLine = datas[0:index]
+    method = strFirstLine.split(b' ')
+    strUrl = method[1]
+    strUrl =bytes(strUrl).decode()
+    indexHost = strUrl.find(strHost)
+    if(indexHost != -1):
+        indexHost = indexHost + len(strHost)
+    strUrl = strUrl[indexHost:]
+    method[1] = strUrl.encode()
+    data = bytes(method[0]).decode() + " " + bytes(method[1]).decode() + " " + bytes(method[2]).decode() + '\r\n' + bytes(datas[index+2:-1]).decode()
+    data.replace("Proxy-Connection","Connection")
+    print("adjustRequestHeader",data)
+    return data.encode()
 
-def gethostfromdata(datas,host):
+def gethostfromdata(datas):
     regex_start_m = re.compile("Host:.+", re.M)
     strHost = regex_start_m.findall(datas.decode())[0][6:-1]
     index = strHost.find(':')
@@ -52,6 +72,7 @@ def gethostfromdata(datas,host):
     else:
         host = (socket.gethostbyname(strHost[0:index]),int(strHost[index+1:]))
     print(repr(host))
+    return host
 def getmethodfromdata(datas):
     index = datas.find(b'\r')
     strFirstLine = datas[0:index]
@@ -60,14 +81,18 @@ def getmethodfromdata(datas):
     return method
 
 def connecttonextpoint(sock,host):
-    sk = socket.socket()
-    sk.connect(host)
-    print('connect next',sk,time.localtime( time.time()))
-    sk.setblocking(False)
-    sockmap[sock] = sk
-    sockmap[sk] = sock
-    sel.register(sk, selectors.EVENT_READ, read)
-
+    try:
+        sk = socket.socket()
+        sk.connect(host)
+        print('connect next',sk,time.localtime( time.time()))
+        sk.setblocking(False)
+        sockmap[sock] = sk
+        sockmap[sk] = sock
+        sel.register(sk, selectors.EVENT_READ, read)
+    except socket.error as msg:
+        if (msg.errno == errno.WSAETIMEDOUT):
+            sk.close()
+            raise msg
 
 def read(sock, mask):
     datas =b''
@@ -76,9 +101,6 @@ def read(sock, mask):
             data = sock.recv(1024)
             if not data and not datas:
                 sel.unregister(sock)
-                sel.unregister(sockmap[sock])
-                sockmap.pop(sockmap[sock])
-                sockmap[sock].close()
                 sockmap.pop(sock)
                 sock.close()
                 break
@@ -101,7 +123,6 @@ def read(sock, mask):
                 break
 
 def writer(sock, mask):
-   sendLen = 0
    while True:
        try:
            sock.sendall(str(datalist[sockmap[sock]]).encode())
@@ -111,10 +132,7 @@ def writer(sock, mask):
            datalist.pop(sockmap[sock])
            break
        except socket.error as msg:
-           sel.unregister(sockmap[sock])
            sel.unregister(sock)
-           sockmap.pop(sockmap[sock])
-           sockmap[sock].close()
            sockmap.pop(sock)
            sock.close()
            break
