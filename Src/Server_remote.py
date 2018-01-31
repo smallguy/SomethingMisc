@@ -47,7 +47,7 @@ def firstread(sock, mask):
                 break
 def adjustRequestHeader(datas):
     regex_start_m = re.compile("Host:.+", re.M)
-    strHost = regex_start_m.findall(datas.decode())[0][6:-1]
+    strHost = regex_start_m.findall(datas.decode())[0][6:]
     index = datas.find(b'\r')
     strFirstLine = datas[0:index]
     method = strFirstLine.split(b' ')
@@ -59,7 +59,8 @@ def adjustRequestHeader(datas):
     strUrl = strUrl[indexHost:]
     method[1] = strUrl.encode()
     data = bytes(method[0]).decode() + " " + bytes(method[1]).decode() + " " + bytes(method[2]).decode() + '\r\n' + bytes(datas[index+2:-1]).decode()
-    data.replace("Proxy-Connection","Connection")
+    indexConn = data.find("Proxy-Connection")
+    data = data[0:indexConn] + data[indexConn+6:]
     print("adjustRequestHeader",data)
     return data.encode()
 
