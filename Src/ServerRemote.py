@@ -8,7 +8,8 @@ def accept(sock, mask):
     print('accept', conn, 'from', addr)
     conn.setblocking(False)
     isclientsocket[conn] = True
-    sel.register(conn, selectors.EVENT_READ, read)
+    if conn.fileno != -1:
+        sel.register(conn, selectors.EVENT_READ, read)
 
 def adjustRequestHeader(datas):
     method = getmethodfromdata(datas)
@@ -69,8 +70,12 @@ def writer(sock, mask):
         if sock in msgtosock.keys():
             sock.sendall(bytes(msgtosock[sock]))
             print('writer:', msgtosock[sock])
-        sel.unregister(sock)
-        sel.register(sock, selectors.EVENT_READ, read)
+        try:
+            sel.unregister(sock)
+        except:
+            pass
+        if (sock.fileno() != -1):
+            sel.register(sock, selectors.EVENT_READ, read)
         msgtosock.pop(sock)
     except:
         onclose(sock)
@@ -89,7 +94,8 @@ def ondatacome(sock,data):
                 channel.pop(channel[sock])
             channel[sock] = sk
             channel[sk] = sock
-            sel.register(sk, selectors.EVENT_READ, read)
+            if sk.fileno() != -1:
+                sel.register(sk, selectors.EVENT_READ, read)
         except socket.error as msg:
             if (msg.errno == errno.WSAETIMEDOUT):
                onclose(sock)
@@ -98,28 +104,49 @@ def ondatacome(sock,data):
          method = getmethodfromdata(data)
          if (method[0] == b"CONNECT"):
              isconnectmethod[sock] = True
+             if (sock in channel.keys()):
+                 isconnectmethod[channel[sock]] = True
              msgtosock[sock] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
-             sel.unregister(sock)
-             sel.register(sock, selectors.EVENT_WRITE, writer)
+             try:
+                sel.unregister(sock)
+             except:
+                 pass
+             if (sock.fileno() != -1):
+                 sel.register(sock, selectors.EVENT_WRITE, writer)
          else:
              isconnectmethod[sock] = False
+             if (sock in channel.keys()):
+                 isconnectmethod[channel[sock]] = False
              adjustdata = adjustRequestHeader(data)
              if sock in channel.keys():
                  msgtosock[channel[sock]] = adjustdata
-                 sel.unregister(channel[sock])
-                 sel.register(channel[sock], selectors.EVENT_WRITE, writer)
+                 try:
+                    sel.unregister(channel[sock])
+                 except:
+                     pass
+                 if (channel[sock].fileno() != -1):
+                    sel.register(channel[sock], selectors.EVENT_WRITE, writer)
          return
-    if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) and (isconnectmethod[sock] == True):
+    #if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) and (sock in isconnectmethod.keys()) and (isconnectmethod[sock] == True)):
+    if(sock in isconnectmethod.keys()) and (isconnectmethod[sock] == True):
         if sock in channel.keys():
              msgtosock[channel[sock]] = data
-             sel.unregister(channel[sock])
-             sel.register(channel[sock], selectors.EVENT_WRITE, writer)
+             try:
+                sel.unregister(channel[sock])
+             except:
+                pass
+             if (channel[sock].fileno() != -1):
+                sel.register(channel[sock], selectors.EVENT_WRITE, writer)
         return
     if (sock not in isclientsocket.keys()) or (isclientsocket[sock] == False):
         if sock in channel.keys():
              msgtosock[channel[sock]] = data
-             sel.unregister(channel[sock])
-             sel.register(channel[sock], selectors.EVENT_WRITE, writer)
+             try:
+                sel.unregister(channel[sock])
+             except:
+                 pass
+             if(channel[sock].fileno() != -1):
+                sel.register(channel[sock], selectors.EVENT_WRITE, writer)
 
 def onclose(sock):
     if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) or ((sock in channel.keys()) and (channel[sock] in isconnectmethod.keys()) and (isconnectmethod[channel[sock]] == True)):
