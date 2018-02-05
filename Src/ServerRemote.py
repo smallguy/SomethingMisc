@@ -1,3 +1,4 @@
+#coding:utf-8
 import socket
 import selectors
 import errno
@@ -45,10 +46,10 @@ def read(sock, mask):
     datas =b''
     while True:
         try:
-            data = sock.recv(1024)
+            data = sock.recv(4096)
             if not data:
                 if datas:
-                    print('read:', bytes(datas))
+                    print('read:\r\n', datas)
                     ondatacome(sock,datas)
                     break
                 onclose(sock)
@@ -57,7 +58,7 @@ def read(sock, mask):
                 datas += data
         except socket.error as msg:
             if msg.errno == errno.WSAEWOULDBLOCK:
-                print ('read:',datas)
+                print ('read:\r\n',datas)
                 ondatacome(sock,datas)
                 break
             else:
@@ -67,8 +68,8 @@ def read(sock, mask):
 def writer(sock, mask):
     try:
         if sock in msgtosock.keys():
-            sock.sendall(bytes(msgtosock[sock]))
-            print('writer:', msgtosock[sock])
+            sock.sendall(msgtosock[sock])
+            print('writer:\r\n', msgtosock[sock])
         sel.unregister(sock)
         sel.register(sock, selectors.EVENT_READ, read)
         msgtosock.pop(sock)
@@ -76,53 +77,82 @@ def writer(sock, mask):
         onclose(sock)
 
 def ondatacome(sock,data):
-    if ((sock in isclientsocket.keys()) and (isclientsocket[sock] == True)) and ((sock not in channel.keys()) or (channel[sock].fileno() == -1)):# to establish channel
-        host = gethostfromdata(data)
-        try:
-            sk = socket.socket()
-            isclientsocket[sk] = False
-            sk.settimeout(1)
-            sk.connect(host)
-            sk.setblocking(False)
-            print('connect next', sk)
-            if ((sock in channel.keys()) and (channel[sock].fileno() == -1)):
-                channel.pop(channel[sock])
-            channel[sock] = sk
-            channel[sk] = sock
-            sel.register(sk, selectors.EVENT_READ, read)
-        except socket.error as msg:
-            if (msg.errno == errno.WSAETIMEDOUT):
+    if ((sock in isclientsocket.keys()) and (isclientsocket[sock] == True)):
+        if((sock not in channel.keys()) or (channel[sock].fileno() == -1)):# to establish channel
+            host = gethostfromdata(data)
+            try:
+                sk = socket.socket()
+                isclientsocket[sk] = False
+                sk.settimeout(1)
+                sk.connect(host)
+                sk.setblocking(False)
+                print('connect next', sk)
+                if ((sock in channel.keys()) and (channel[sock].fileno() == -1)):
+                    channel.pop(channel[sock])
+                channel[sock] = sk
+                channel[sk] = sock
+                sel.register(sk, selectors.EVENT_READ, read)
+            except:
                onclose(sock)
-            return
-    if ((sock in isclientsocket.keys()) and (isclientsocket[sock] == True)) and ((sock not in isconnectmethod.keys()) or (isconnectmethod[sock] == False)):
-         method = getmethodfromdata(data)
-         if (method[0] == b"CONNECT"):
-             isconnectmethod[sock] = True
-             msgtosock[sock] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
-             sel.unregister(sock)
-             sel.register(sock, selectors.EVENT_WRITE, writer)
-         else:
-             isconnectmethod[sock] = False
-             adjustdata = adjustRequestHeader(data)
+               return
+        if (sock not in isconnectmethod.keys()) or (isconnectmethod[sock] == False):
+             method = getmethodfromdata(data)
+             if (method[0] == b"CONNECT"):
+                isconnectmethod[sock] = True
+                if sock in channel.keys():
+                    isconnectmethod[channel[sock]] = True
+                msgtosock[sock] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
+                print('server->client:', msgtosock[sock])
+                try:
+                    sel.unregister(sock)
+                except:
+                    pass
+                sel.register(sock, selectors.EVENT_WRITE, writer)
+             else:
+                isconnectmethod[sock] = False
+                if sock in channel.keys():
+                    isconnectmethod[channel[sock]] = False
+                adjustdata = adjustRequestHeader(data)
+                if sock in channel.keys():
+                    print('client->server:', adjustdata)
+                    msgtosock[channel[sock]] = adjustdata
+                    try:
+                        sel.unregister(channel[sock])
+                    except:
+                        pass
+                    sel.register(channel[sock], selectors.EVENT_WRITE, writer)
+             return
+        elif isconnectmethod[sock] == True:
              if sock in channel.keys():
-                 msgtosock[channel[sock]] = adjustdata
-                 sel.unregister(channel[sock])
-                 sel.register(channel[sock], selectors.EVENT_WRITE, writer)
-         return
-    if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) and (isconnectmethod[sock] == True):
+                print('connect client->server:', data)
+                msgtosock[channel[sock]] = data
+                try:
+                    sel.unregister(channel[sock])
+                except:
+                    pass
+                sel.register(channel[sock], selectors.EVENT_WRITE, writer)
+             return
+    elif sock in isconnectmethod.keys() and isconnectmethod[sock] == True:
         if sock in channel.keys():
+             print('connect server->client:', data)
              msgtosock[channel[sock]] = data
-             sel.unregister(channel[sock])
+             try:
+                sel.unregister(channel[sock])
+             except:
+                 pass
              sel.register(channel[sock], selectors.EVENT_WRITE, writer)
-        return
-    if (sock not in isclientsocket.keys()) or (isclientsocket[sock] == False):
+    else:
         if sock in channel.keys():
+             print('server->client:', data)
              msgtosock[channel[sock]] = data
-             sel.unregister(channel[sock])
+             try:
+                sel.unregister(channel[sock])
+             except:
+                 pass
              sel.register(channel[sock], selectors.EVENT_WRITE, writer)
 
 def onclose(sock):
-    if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) or ((sock in channel.keys()) and (channel[sock] in isconnectmethod.keys()) and (isconnectmethod[channel[sock]] == True)):
+    if ((sock in isclientsocket.keys()) and isclientsocket[sock] == True) or ((sock in isconnectmethod.keys()) and (isconnectmethod[sock] == True)):
         if sock in msgtosock.keys():
             msgtosock.pop(sock)
         if((sock in channel.keys()) and (channel[sock] in msgtosock.keys())):
@@ -156,10 +186,6 @@ def onclose(sock):
     else:
         if sock in msgtosock.keys():
             msgtosock.pop(sock)
-        if sock in isconnectmethod.keys():
-            isconnectmethod.pop(sock)
-        if (sock in isclientsocket.keys()):
-            isclientsocket.pop(sock)
         if(sock.fileno() != -1):
             try:
                 sel.unregister(sock)
@@ -170,7 +196,7 @@ def onclose(sock):
 
 sk = socket.socket()
 sk.bind(('127.0.0.1', 1561))
-sk.listen(100)
+sk.listen(1000)
 sk.setblocking(False)
 sel = selectors.DefaultSelector()
 sel.register(sk, selectors.EVENT_READ, accept)
