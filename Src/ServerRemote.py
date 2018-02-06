@@ -3,6 +3,7 @@ import socket
 import selectors
 import errno
 import re
+import queue
 
 def accept(sock, mask):
     conn, addr = sock.accept()  # Should be ready
@@ -20,7 +21,8 @@ def adjustRequestHeader(datas):
     request_header = re.sub('Proxy-Connection: .+\r\n', '', request_header)
     request_header = re.sub('Connection: .+', '', request_header)
     request_header = re.sub('\r\n\r\n', '\r\nConnection: close\r\n\r\n', request_header)
-    request_header = re.sub(uri, uri[uri.index('/', 8):], request_header)
+    idx = uri.index('/', 8)
+    request_header = re.sub(uri, uri[idx:], request_header)
     data = request_header + data[header_length:]
     return data.encode()
 
@@ -68,8 +70,11 @@ def read(sock, mask):
 def writer(sock, mask):
     try:
         if sock in msgtosock.keys():
-            sock.sendall(msgtosock[sock])
-            print('writer:\r\n', msgtosock[sock])
+            q = msgtosock[sock]
+            while q.empty() != True:
+                msg = q.get()
+                sock.sendall(msg)
+                print('writer:\r\n', msg)
         sel.unregister(sock)
         sel.register(sock, selectors.EVENT_READ, read)
         msgtosock.pop(sock)
@@ -101,8 +106,16 @@ def ondatacome(sock,data):
                 isconnectmethod[sock] = True
                 if sock in channel.keys():
                     isconnectmethod[channel[sock]] = True
-                msgtosock[sock] = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
-                print('server->client:', msgtosock[sock])
+                toclientmsg = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
+                if sock not in msgtosock.keys():
+                    q = queue.Queue(20)
+                    q.put_nowait(toclientmsg)
+                    msgtosock[sock] = q
+                else:
+                    q = msgtosock.pop(sock)
+                    q.put_nowait(toclientmsg)
+                    msgtosock[sock] = q
+                print('server->client:',toclientmsg)
                 try:
                     sel.unregister(sock)
                 except:
@@ -115,7 +128,14 @@ def ondatacome(sock,data):
                 adjustdata = adjustRequestHeader(data)
                 if sock in channel.keys():
                     print('client->server:', adjustdata)
-                    msgtosock[channel[sock]] = adjustdata
+                    if (channel[sock]) not in msgtosock:
+                        q = queue.Queue(20)
+                        q.put_nowait(adjustdata)
+                        msgtosock[channel[sock]] = q
+                    else:
+                        q = msgtosock.pop(channel[sock])
+                        q.put_nowait(adjustdata)
+                        msgtosock[channel[sock]] = q
                     try:
                         sel.unregister(channel[sock])
                     except:
@@ -125,7 +145,14 @@ def ondatacome(sock,data):
         elif isconnectmethod[sock] == True:
              if sock in channel.keys():
                 print('connect client->server:', data)
-                msgtosock[channel[sock]] = data
+                if (channel[sock]) not in msgtosock:
+                    q = queue.Queue(20)
+                    q.put_nowait(data)
+                    msgtosock[channel[sock]] = q
+                else:
+                    q = msgtosock.pop(channel[sock])
+                    q.put_nowait(data)
+                    msgtosock[channel[sock]] = q
                 try:
                     sel.unregister(channel[sock])
                 except:
@@ -135,7 +162,14 @@ def ondatacome(sock,data):
     elif sock in isconnectmethod.keys() and isconnectmethod[sock] == True:
         if sock in channel.keys():
              print('connect server->client:', data)
-             msgtosock[channel[sock]] = data
+             if (channel[sock]) not in msgtosock:
+                 q = queue.Queue(20)
+                 q.put_nowait(data)
+                 msgtosock[channel[sock]] = q
+             else:
+                 q = msgtosock.pop(channel[sock])
+                 q.put_nowait(data)
+                 msgtosock[channel[sock]] = q
              try:
                 sel.unregister(channel[sock])
              except:
@@ -144,7 +178,14 @@ def ondatacome(sock,data):
     else:
         if sock in channel.keys():
              print('server->client:', data)
-             msgtosock[channel[sock]] = data
+             if (channel[sock]) not in msgtosock:
+                 q = queue.Queue(20)
+                 q.put_nowait(data)
+                 msgtosock[channel[sock]] = q
+             else:
+                 q = msgtosock.pop(channel[sock])
+                 q.put_nowait(data)
+                 msgtosock[channel[sock]] = q
              try:
                 sel.unregister(channel[sock])
              except:
