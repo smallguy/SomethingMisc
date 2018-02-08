@@ -13,17 +13,22 @@ def accept(sock, mask):
     sel.register(conn, selectors.EVENT_READ, read)
 
 def adjustRequestHeader(datas):
-    method = getmethodfromdata(datas)
-    uri = bytes(method[1]).decode()
     data = bytes(datas).decode()
-    request_header = data.split('\r\n\r\n')[0] + '\r\n\r\n'
-    header_length = len(request_header)
-    request_header = re.sub('Proxy-Connection: .+\r\n', '', request_header)
-    request_header = re.sub('Connection: .+', '', request_header)
-    request_header = re.sub('\r\n\r\n', '\r\nConnection: close\r\n\r\n', request_header)
-    idx = uri.index('/', 8)
-    request_header = re.sub(uri, uri[idx:], request_header)
-    data = request_header + data[header_length:]
+    method = getmethodfromdata(datas)
+    if(len(method) == 3):
+        uri = bytes(method[1]).decode()
+        request_header = data.split('\r\n\r\n')[0] + '\r\n\r\n'
+        header_length = len(request_header)
+        request_header = re.sub('Proxy-Connection: .+\r\n', '', request_header)
+        request_header = re.sub('Connection: .+', '', request_header)
+        request_header = re.sub('\r\n\r\n', '\r\nConnection: close\r\n\r\n', request_header)
+        if 'http' in uri:
+            idx = uri.index('/', 8)
+        else:
+            idx = uri.index('/')
+        thismethod = bytes(method[0]).decode()
+        request_header = bytes(method[0]).decode() + ' ' + request_header[len(thismethod)+idx+1:]
+        data = request_header + data[header_length:]
     return data.encode()
 
 def gethostfromdata(datas):
@@ -102,13 +107,13 @@ def ondatacome(sock,data):
                return
         if (sock not in isconnectmethod.keys()) or (isconnectmethod[sock] == False):
              method = getmethodfromdata(data)
-             if (method[0] == b"CONNECT"):
+             if (len(method) == 3) and (method[0] == b"CONNECT"):
                 isconnectmethod[sock] = True
                 if sock in channel.keys():
                     isconnectmethod[channel[sock]] = True
-                toclientmsg = method[2] + b' HTTP/1.1 200 Connection Established\r\nConnection: Close\r\n\r\n'
+                toclientmsg = method[2] + b' 200 Connection Established\r\nConnection: Close\r\n\r\n'
                 if sock not in msgtosock.keys():
-                    q = queue.Queue(20)
+                    q = queue.Queue(100)
                     q.put_nowait(toclientmsg)
                     msgtosock[sock] = q
                 else:
@@ -129,7 +134,7 @@ def ondatacome(sock,data):
                 if sock in channel.keys():
                     print('client->server:', adjustdata)
                     if (channel[sock]) not in msgtosock:
-                        q = queue.Queue(20)
+                        q = queue.Queue(100)
                         q.put_nowait(adjustdata)
                         msgtosock[channel[sock]] = q
                     else:
@@ -146,7 +151,7 @@ def ondatacome(sock,data):
              if sock in channel.keys():
                 print('connect client->server:', data)
                 if (channel[sock]) not in msgtosock:
-                    q = queue.Queue(20)
+                    q = queue.Queue(100)
                     q.put_nowait(data)
                     msgtosock[channel[sock]] = q
                 else:
@@ -163,7 +168,7 @@ def ondatacome(sock,data):
         if sock in channel.keys():
              print('connect server->client:', data)
              if (channel[sock]) not in msgtosock:
-                 q = queue.Queue(20)
+                 q = queue.Queue(100)
                  q.put_nowait(data)
                  msgtosock[channel[sock]] = q
              else:
@@ -179,7 +184,7 @@ def ondatacome(sock,data):
         if sock in channel.keys():
              print('server->client:', data)
              if (channel[sock]) not in msgtosock:
-                 q = queue.Queue(20)
+                 q = queue.Queue(100)
                  q.put_nowait(data)
                  msgtosock[channel[sock]] = q
              else:
@@ -235,20 +240,21 @@ def onclose(sock):
         else:
             sock.close()
 
-sk = socket.socket()
-sk.bind(('127.0.0.1', 1561))
-sk.listen(1000)
-sk.setblocking(False)
-sel = selectors.DefaultSelector()
-sel.register(sk, selectors.EVENT_READ, accept)
-msgtosock = {} #store msg
-channel = {} # store connection map
-isclientsocket = {}
-isconnectmethod = {} #is CONNECT method
-print("start")
-while True:
-    print("listening")
-    events = sel.select()
-    for key, mask in events:
-        callback = key.data
-        callback(key.fileobj, mask)
+if __name__ == '__main__':
+    sk = socket.socket()
+    sk.bind(('127.0.0.1', 1561))
+    sk.listen(1000)
+    sk.setblocking(False)
+    sel = selectors.DefaultSelector()
+    sel.register(sk, selectors.EVENT_READ, accept)
+    msgtosock = {} #store msg
+    channel = {} # store connection map
+    isclientsocket = {}
+    isconnectmethod = {} #is CONNECT method
+    print("start")
+    while True:
+        print("listening")
+        events = sel.select()
+        for key, mask in events:
+            callback = key.data
+            callback(key.fileobj, mask)
