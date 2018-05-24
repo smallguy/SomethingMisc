@@ -1,5 +1,5 @@
 #coding:utf-8
-test
+test test
 import socket
 import selectors
 import errno
